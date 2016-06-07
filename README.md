@@ -3,6 +3,7 @@ JSONimp
 
 A simple JSON manipulation tool to more easily manage certain scripting tasks on the command line. It is currently a wrapper for [jq][] which is an excellent tool for manipulating JSON and is a language unto itself. The wrapper allows for a simplified syntax when the full power of a tool like [jq][] is unnecessary.
 
+This repo uses Sam Stephenson's awesome [BATS][bats - GitHub]: Bash Automated Testing System  :-D
 
 Usage
 -----
@@ -141,5 +142,5 @@ $ jsonimp test_one.bak.json
 
 
 [jq]: https://stedolan.github.io/jq/
-
+[bats - GitHub]: https://github.com/sstephenson/bats
 

@@ -10,6 +10,7 @@
 #####
 # ChangeLog:
 # ----------
+# 2016-06-06  0.1.1      Updated README.md
 # 2016-06-02  0.1.0      Initial script creation.
 #
 #
@@ -18,7 +19,7 @@ declare -r APP_AUTHOR_NAME="RuneImp"
 declare -r APP_AUTHOR_MAIL="runeimp@gmail.com"
 declare -r APP_NAME="JSONimp"
 declare -r APP_FILE="jsonimp"
-declare -r APP_VERSION="0.1.0"
+declare -r APP_VERSION="0.1.1"
 declare -r APP_LICENSES="http://opensource.org/licenses/MIT"
 declare -r APP_LABEL="${APP_AUTHOR_NAME}'s $APP_NAME v$APP_VERSION
 License(s): $APP_LICENSES"
