@@ -1,0 +1,168 @@
+######################
+# SubImp BASH Library (subimp.bashlib)
+#
+# Based on concepts respectfully (and lovingly) extracted from
+# https://github.com/jneen/ry
+#
+# @author RuneImp <runeimp@gmail.com>
+# @licenses http://opensource.org/licenses/MIT
+#
+#####
+# ChangeLog:
+# ----------
+# 2016-05-02  0.3.0      Renamed bashimp.shlib to subimp.bashlib.
+#                    Added command function calling.
+# 2016-04-30  0.2.0      Updated app references
+# 2016-04-29  0.1.0      Initial script creation
+#
+#
+
+LIB_NAME="SubImp BASH Library"
+LIB_FILE="subimp.bashlib"
+
+
+[[ "x$APP_NAME" = "x" ]]						&& echo "APP_NAME is undefined" 1>&2
+[[ "x$APP_FILE" = "x" ]]						&& echo "APP_FILE is undefined" 1>&2
+[[ "x$CMD_PREFIX" = "x" ]]						&& CMD_PREFIX="${APP_FILE}-"
+[[ "x$FNC_PREFIX" = "x" ]]						&& FNC_PREFIX="${APP_FILE}::"
+[[ $DEFAULT_LIST_SUBCOMMANDS -ne 1 ]]			&& declare -i DEFAULT_LIST_SUBCOMMANDS=0
+[[ $DISPLAY_MISSING_SUBCOMMAND_ERRORS -ne 1 ]]	&& declare -i DISPLAY_MISSING_SUBCOMMAND_ERRORS=0
+
+declare -i EXIT_NO_COMMAND=1
+declare -i EXIT_NO_SUBCOMMAND_FOUND=2
+declare -i EXIT_NO_SUBCOMMANDS_FOUND=3
+
+declare -i SUBIMP_SUBCOMMAND_FOUND=1
+declare cmd=""
+declare cmd_name=""
+if [[ "x$CMD_NAME" != 'x' ]]; then
+	cmd_name="$CMD_NAME"
+else
+	cmd_name="$1"
+	shift
+fi
+declare fnc=""
+declare -i fast_basename=1
+
+
+[[ "x$MSG_SUBCOMMAND_NOT_GIVEN" = 'x' ]] && declare MSG_SUBCOMMAND_NOT_GIVEN='ERROR: No command specified'
+[[ "x$MSG_SUBCOMMAND_NOT_FOUND" = 'x' ]] && declare MSG_SUBCOMMAND_NOT_FOUND="WARNING: '$cmd_name' not available as a $APP_FILE subcommand. Maybe you ment something else?"
+
+# Testing for fast basename support
+declare TMP='/path/to/trim/test.txt.gz'
+TMP="${TMP##*/}"
+if [[ "${TMP}" = 'test.txt.gz' ]]; then
+	fast_basename=0
+fi
+
+unset TMP
+
+#
+# FUNCTIONS
+#
+subimp::error()
+{
+	echo "	$1" 1>&2
+	if [[ "x$2" != "x" ]]; then
+		exit $2
+	fi
+}
+
+subimp::list_subcommands() {
+	declare filename=""
+	declare -i i=0
+	declare oldIFS="$IFS"
+	IFS=:
+
+	echo "	$APP_NAME Commands:"
+	printf "		%-12s %s\n" list "List all subcommands."
+	printf "		%-12s %s\n" version "Display application version number only."
+	printf "		%-12s %s\n" Version "Display application label with version number."
+
+	while read -r path
+	do
+		IFS="$oldIFS"
+		for filename in $(ls "${path}/${CMD_PREFIX}"* 2> /dev/null); do
+			# echo "\$filename: $filename"
+			if [[ "${filename##*.}" != 'js' ]]; then
+				if [[ $fast_basename -eq 0 ]]; then
+					filename="${filename##*/}"
+					if [[ "${filename##*.}" = 'shlib' ]]; then
+						filename="${filename%.*}"
+					fi
+					filename="${filename#$CMD_PREFIX}"
+				else
+					filename="$(basename "$filename")"
+					filename="$(echo "$filename" | sed "s/^$CMD_PREFIX//")"
+				fi
+				echo "		$filename"
+			fi
+		done
+		IFS=:
+	done <<< $(echo "$PATH" | tr ':' '\n')
+
+	IFS="$oldIFS"
+}
+
+subimp::get_type()
+{
+	echo "$(type -t $1 2> /dev/null)"
+}
+
+subimp::run_subcommand()
+{
+	# echo "$LIB_NAME subimp::run_subcommand() | \$#: $# | \$@: $@ | \$LINENO: $LINENO"
+	# echo "$LIB_NAME subimp::run_subcommand() | \${#ARGV[@]}: ${#ARGV[@]} | \${ARGV[@]}: ${ARGV[@]} | \$LINENO: $LINENO"
+	cmd="${CMD_PREFIX}${1}"
+	fnc="${FNC_PREFIX}${1}"
+	# echo "$LIB_NAME subimp::run_subcommand() | \$cmd: $cmd | \$LINENO: $LINENO"
+	# echo "$LIB_NAME subimp::run_subcommand() | \$fnc: $fnc | \$LINENO: $LINENO"
+	if [[ "x$cmd_name" = "x" ]] && [[ $DEFAULT_LIST_SUBCOMMANDS -ne 1 ]]; then
+		subimp::list_subcommands
+		return $?
+	elif [[ $(subimp::get_type "$fnc") = 'function' ]]; then
+		SUBIMP_SUBCOMMAND_FOUND=0
+		# "$fnc" "$@"
+		$fnc "${ARGV[@]:1}"
+		return $?
+	elif [[ "$cmd" != "$CMD_PREFIX" ]]; then
+		if [[ $(subimp::get_type "$cmd") = 'file' ]]; then
+			SUBIMP_SUBCOMMAND_FOUND=0
+			# "$cmd" "$@"
+			"$cmd" "${ARGV[@]:1}"
+			return $?
+		elif [[ $DISPLAY_MISSING_SUBCOMMAND_ERRORS -eq 0 ]]; then
+			subimp::error "$MSG_SUBCOMMAND_NOT_FOUND" $EXIT_NO_SUBCOMMAND_FOUND
+		fi
+	elif [[ $DISPLAY_MISSING_SUBCOMMAND_ERRORS -eq 0 ]]; then
+		subimp::error "$MSG_SUBCOMMAND_NOT_GIVEN" $EXIT_NO_COMMAND
+	fi
+}
+
+[[ ${#ARGV[@]} -eq 0 ]] && [[ $# -gt 0 ]] && ARGV=( "$@" )
+
+# echo "$LIB_NAME | \$cmd_name: $cmd_name | \$LINENO: $LINENO"
+
+#
+# Subcommand Processing
+#
+case "$cmd_name" in
+	list)
+		subimp::list_subcommands "$@"
+		exit 0
+		;;
+	version)
+		echo "$APP_VERSION"
+		exit 0
+		;;
+	Version)
+		echo "$APP_LABEL"
+		exit 0
+		;;
+	--[a-zA-Z]*)
+		echo "$cmd_name ?"
+		;;
+	*)
+		subimp::run_subcommand "${ARGV[@]}"
+		;;
+esac
