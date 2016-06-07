@@ -4,6 +4,7 @@
 #
 # Simple JSON processing script.
 #
+# @dependency subimp.bashlib <https://github.com/runeimp/bash-libs>
 # @dependency jq <https://stedolan.github.io/jq/>
 #
 #####
