@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+###################
+# JSONimp
+#
+# Simple JSON processing script.
+#
+# @dependency jq <https://stedolan.github.io/jq/>
+#
+#####
+# ChangeLog:
+# ----------
+# 2016-06-02  0.1.0      Initial script creation.
+#
+#
+
+declare -r APP_AUTHOR_NAME="RuneImp"
+declare -r APP_AUTHOR_MAIL="runeimp@gmail.com"
+declare -r APP_NAME="JSONimp"
+declare -r APP_FILE="jsonimp"
+declare -r APP_VERSION="0.1.0"
+declare -r APP_LICENSES="http://opensource.org/licenses/MIT"
+declare -r APP_LABEL="${APP_AUTHOR_NAME}'s $APP_NAME v$APP_VERSION
+License(s): $APP_LICENSES"
+
+declare -r JQ_1P4_SED_QUOTE_FUNKY_WORDS='s/\(\.*[a-zA-Z_]*[^][{}a-zA-Z0-9_.]\{1\}[a-zA-Z_]*\)/["\1"]/g'
+declare -r JQ_1P5_SED_QUOTE_FUNKY_WORDS='s/\([a-zA-Z_]*[^][{}a-zA-Z0-9_.]\{1\}[a-zA-Z_]*\)/"\1"/g'
+declare -r JQ_VALUE_IS_ARRAY='\[.+\]'
+declare -r JQ_VALUE_IS_BOOLEAN='(true|false)'
+declare -r JQ_VALUE_IS_NULL='null'
+declare -r JQ_VALUE_IS_NUMBER='([0-9]+\.?[0-9]*|[0-9]+[Ee]?[+-]?[0-9]+)'
+declare -r JQ_VALUE_IS_OBJECT='\{.+\}'
+declare -r JQ_VALUE_IS_STRING_QUOTED='^".+"$'
+declare -r JQ_VALUE_IS_STRING_RAW='^[^"]+.*[^"]*$'
+declare -r JQ_VALUE_TYPE_ARRAY='array'
+declare -r JQ_VALUE_TYPE_BOOLEAN='boolean'
+declare -r JQ_VALUE_TYPE_EMPTY='empty'
+declare -r JQ_VALUE_TYPE_UNDEFINED='undefined'
+declare -r JQ_VALUE_TYPE_NULL='null'
+declare -r JQ_VALUE_TYPE_NUMBER='number'
+declare -r JQ_VALUE_TYPE_OBJECT='object'
+declare -r JQ_VALUE_TYPE_QUOTED='quoted' # Quoted String
+declare -r JQ_VALUE_TYPE_STRING='string'
+
+declare -a ARGV
+declare -i DEBUG_LEVEL=0
+declare -i edit_in_place=1
+declare json_data=''
+
+#
+# SubImp BASH Library Config
+#
+declare -i DEFAULT_LIST_SUBCOMMANDS=1
+declare -i DISPLAY_MISSING_SUBCOMMAND_ERRORS=1
+declare -r CMD_PREFIX="jsonimp-"
+declare -r FNC_PREFIX="jsonimp::"
+declare CMD_NAME="$1"
+shift
+
+
+#
+# FUNCTIONS
+#
+
+###
+# JQ helper to quote keys with special characters
+#
+jq_path_fix()
+{
+  local json_path="$1"
+  local jq_ver="${2:-1.5}"
+  
+  if [[ "$jq_ver" = '1.5' ]]; then
+    json_path="$(echo "$json_path" | sed $JQ_1P5_SED_QUOTE_FUNKY_WORDS)" # jq >= 1.5
+  else
+    json_path="$(echo "$json_path" | sed $JQ_1P4_SED_QUOTE_FUNKY_WORDS)" # jq < 1.5
+  fi
+
+  printf '%s' "$json_path"
+}
+
+jsonimp::cmp()
+{
+	local json_one="$1"
+	local json_two="$2"
+
+	cmp <(jq -cS . "$json_one") <(jq -cS . "$json_two") > /dev/null
+	local -i exit_code=$?
+
+	# jsonimp_error "json_compare() | \$1: '$1' | \$2: '$2' | \$exit_code: $exit_code"
+	return $exit_code
+}
+
+jsonimp::del()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	# jsonimp_error "jsonimp::del() | \$json_file: '$json_file' | \$json_path: '$json_path'"
+	# jsonimp_error "jsonimp::del() | jq '.$json_path' '$json_file'"
+	jq "del(.$json_path)" "$json_file"
+}
+
+jsonimp::get()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	# jsonimp_error "jsonimp::get() | \$json_file: '$json_file' | \$json_path: '$json_path'"
+	# jsonimp_error "jsonimp::get() | jq '.$json_path' '$json_file'"
+	jq ".$json_path" "$json_file"
+}
+
+jsonimp::has()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	local json_data="$3"
+	jq ".$json_path | contains([\"$json_data\"])" "$json_file"
+}
+
+jsonimp::push()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	if [[ "x${3}x" != 'xx' ]]; then
+		json_data="$3"
+	fi
+	local value_type="$(jsonimp_value_type "$json_data")"
+
+	case "$value_type" in
+		empty)	json_data='null'		;;
+		string)	json_data='"'"$json_data"'"'	;;
+		undefined)
+			echo "Undefined value type for '$json_data'" 1>&2
+			;;
+		*)
+			# Nada. No extra processing needed.
+			:
+			;;
+	esac
+
+	# jq '.launch_in_dev += ["Lynx"]' testem.json
+	if [[ $edit_in_place -eq 0 ]]; then
+		jsonimp_edit_in_place "$json_file" "$(jq ".$json_path += [$json_data]" "$json_file")"
+	else
+		jq ".$json_path += [$json_data]" "$json_file"
+	fi
+}
+
+jsonimp::raw()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	# jsonimp_error "jsonimp::raw() | \$json_file: '$json_file' | \$json_path: '$json_path'"
+	# jsonimp_error "jsonimp::raw() | jq '.$json_path' '$json_file'"
+	jq --raw-output ".$json_path" "$json_file"
+}
+
+jsonimp::set()
+{
+	local json_file="$1"
+	local json_path="$(jq_path_fix "$2")"
+	if [[ "x${3}x" != 'xx' ]]; then
+		json_data="$3"
+	fi
+	local output=''
+	local value_type="$(jsonimp_value_type "$json_data")"
+
+	# jsonimp_error "jsonimp::set() | \$json_file: '$json_file' | \$json_path: '$json_path' | \$json_data: '$json_data' | \$value_type: $value_type | \$edit_in_place: $edit_in_place"
+
+	case "$value_type" in
+		empty)	json_data='null'		;;
+		string)	json_data='"'"$json_data"'"'	;;
+		undefined)
+			echo "Undefined value type for '$json_data'" 1>&2
+			;;
+		*)
+			# Nada. No extra processing needed.
+			:
+			;;
+	esac
+
+	# output=$(jq --tab --sort-keys ".$json_path = $json_data" "$json_file")
+	if [[ $edit_in_place -eq 0 ]]; then
+		jsonimp_edit_in_place "$json_file" "$(jq ".$json_path = $json_data" "$json_file")"
+	else
+		jq ".$json_path = $json_data" "$json_file"
+	fi
+}
+
+jsonimp_edit_in_place()
+{
+	local json_file="$1"
+	local data="$2"
+	local temp_file="$(jsonimp_tempfile)"
+
+	# jsonimp_error "jsonimp_edit_in_place() | \$json_file: $json_file | \$temp_file: $temp_file"
+
+	echo "$data" > "$temp_file"
+	mv -f "$temp_file" "$json_file"
+}
+
+###
+# Create a randomized tempfile
+#
+# @param	$1	The (optional) basename of the tempfile.
+# @param	$1	The (optional) basepath of the tempfile.
+# @return	The path of the tempfile
+#
+jsonimp_tempfile()
+{
+	local basename='jsonimp-tempfile'
+	local basepath=''
+	local -i exit_code=0
+	local result=''
+	local tmp=''
+
+	tmp=$(which mktemp 2>/dev/null)
+	local -r COMMAND_MKTEMP_SUPPORTED=$?
+	unset tmp
+
+	if [ $# -gt 0 ]; then
+		basename="$1"
+		if [ $COMMAND_MKTEMP_SUPPORTED -eq 0 ]; then
+			basename="${basename}.XXXXXXXXXX"
+		else
+			basename="${basename}.$RANDOM"
+		fi
+	fi
+
+	if [ $# -gt 1 ]; then
+		basepath="$2"
+	fi
+
+	if [ $COMMAND_MKTEMP_SUPPORTED -eq 0 ]; then
+		if [ -n "$basepath" ]; then
+			result=`mktemp -p "$basepath" "${basename}.XXXXXXXXXX"`
+		else
+			result=`mktemp -t ${basename}.XXXXXXXXXX`
+		fi
+	elif [ -n "$TMPDIR" ] &&  [ -d '/var/tmp' ] && [ -w '/var/tmp' ]; then
+		result="${TMPDIR}${basename}.$RANDOM"
+	elif [ -d '/var/tmp' ] && [ -w '/var/tmp' ]; then
+		result="/var/tmp/${basename}.$RANDOM"
+	elif [ -d '/tmp' ] && [ -w '/tmp' ]; then
+		result="/tmp/${basename}.$RANDOM"
+	else
+		exit_code=1
+	fi
+
+	printf "$result"
+	return $exit_code
+}
+
+
+jsonimp_error()
+{
+	echo "$1" 1>&2
+
+	if [[ "x${2}x" != 'xx' ]]; then
+		exit $2
+	fi
+}
+
+
+jsonimp_usage()
+{
+cat << EOF
+usage: $0 [command] json_file json_path [option] [value]
+
+This script allows for manipulation of JSON files via the command line.
+
+OPTIONS:
+  -c | -cmd | --compare              Compare two JSON files
+  -d | -del | --delete | --remove    Delete a JSON key/value
+  -g | -get | --get                  Get a JSON value
+  -i | -inplace | --in-place         Edit the JSON file in-place
+  -push | --array-push               Push a value onto a JSON array
+  -r | -raw | --raw                  Get the raw (unstrung) value
+  -s | -set | --set                  Set a JSON value
+
+
+Examples:
+    # Get the JSON value for the key name
+    $ jsonimp get test_one.json 'name'
+    "RuneImp"
+    # -or-
+    $ jsonimp test_one.json 'name' -g
+    "RuneImp"
+
+    # Get the raw value for the key name
+    $ jsonimp raw test_one.json 'name'
+    RuneImp
+    # -or-
+    $ jsonimp test_one.json 'name' -r
+    RuneImp
+
+EOF
+}
+
+
+jsonimp_value_type()
+{
+	local result="$JQ_VALUE_TYPE_UNDEFINED" # empty string?
+
+	if [[ "${#1}" -eq 0 ]] || [[ "x${1}x" = 'xx' ]]; then
+		result="$JQ_VALUE_TYPE_EMPTY"
+	elif [[ "$1" =~ $JQ_VALUE_IS_NUMBER ]]; then
+		result="$JQ_VALUE_TYPE_NUMBER"
+	elif [[ "$1" =~ $JQ_VALUE_IS_BOOLEAN ]]; then
+		result="$JQ_VALUE_TYPE_BOOLEAN"
+	elif [[ "$1" =~ $JQ_VALUE_IS_NULL ]]; then
+		result="$JQ_VALUE_TYPE_NULL"
+	elif [[ "$1" =~ $JQ_VALUE_IS_ARRAY ]]; then
+		result="$JQ_VALUE_TYPE_ARRAY"
+	elif [[ "$1" =~ $JQ_VALUE_IS_OBJECT ]]; then
+		result="$JQ_VALUE_TYPE_OBJECT"
+	elif [[ "$1" =~ $JQ_VALUE_IS_STRING_QUOTED ]]; then
+		result="$JQ_VALUE_TYPE_QUOTED"
+	elif [[ "$1" =~ $JQ_VALUE_IS_STRING_RAW ]]; then
+		result="$JQ_VALUE_TYPE_STRING"
+	fi
+
+	echo "$result"
+}
+
+
+#
+# OPTION PARSING
+#
+until [[ $# -eq 0 ]]; do
+	case "$1" in
+		-c | -cmd | --compare)
+			# Compare JSON Files
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='cmp'
+			;;
+		-d | -del | --delete | --remove)
+			# Delete Value
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='del'
+			;;
+		-g | -get | --get)
+			# Get Value
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='get'
+			;;
+		-i | -inplace | --in-place)
+			# Edit In Place
+			edit_in_place=0
+			;;
+		-push | --array-push)
+			# Array Push
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='push'
+			json_data="$2"
+			shift
+			;;
+		-r | -raw | --raw)
+			# Get Raw (unstrung) Value
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='raw'
+			;;
+		-s | -set | --set)
+			# Set Value
+			if [[ "x${CMD_NAME}x" != 'xx' ]]; then
+				ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+			fi
+			CMD_NAME='set'
+			json_data="$2"
+			shift
+			;;
+		*)
+			# Argument
+			ARGV=( "${ARGV[@]}" "$1" )
+			;;
+	esac
+
+	shift
+done
+
+if [[ "${#ARGV[@]}" -eq 0 ]]; then
+	if [[ -e "$CMD_NAME" ]]; then
+		if [[ -r "$CMD_NAME" ]]; then
+			# jsonimp_error "Display JSON"
+			if [[ $edit_in_place -eq 0 ]]; then
+				jsonimp_edit_in_place "$CMD_NAME" "$(jq '.' "$CMD_NAME")"
+			else
+				jq '.' "$CMD_NAME"
+			fi
+		else
+			jsonimp_error "$CMD_NAME not readable"
+		fi
+	else
+		jsonimp_usage
+	fi
+elif [[ "$CMD_NAME" = 'set' ]]; then
+	ARGV=( "$CMD_NAME" "${ARGV[@]}" "$json_data" )
+	# jsonimp_error "\$CMD_NAME 'set'"
+elif [[ "x${CMD_NAME}x" != 'xx' ]]; then
+	# jsonimp_error "\$CMD_NAME: $CMD_NAME"
+	ARGV=( "$CMD_NAME" "${ARGV[@]}" )
+fi
+
+
+
+source subimp.bashlib
+
